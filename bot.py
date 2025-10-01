@@ -2,19 +2,20 @@
 """
 Midpoint-Reversal + VWAP-bounce + ATR-TP/SL
 50 high-vol alts, 5-min, Binance public API
+Optimized for Render (keep-alive loop inside)
 """
-import os, time, datetime, requests, json
+import os, time, datetime, requests, json, asyncio
 import pandas as pd
 import numpy as np
 from telegram import Bot
 
 # ----------  user constants  ----------
 BOT_TOKEN   = os.getenv("BOT_TOKEN")
-CHAT_ID     = 185003015
+CHAT_ID     = int(os.getenv("CHAT_ID"))
 INTERVAL    = "5m"
 LIMIT       = 200
 SYMBOLS     = [
-    "DOGEUSDT","SHIBUSDT","APTUSDT","OPUSDT","ARBUSDT","SOLUSDT","MATICUSDT","AVAXUSDT","ATOMUSDT","FTMUSDT",
+    "DOGEUSDT","SHIBUSDT","APTUSDT","OPUSDT","ARBUSDT","SOLUSDT","POLUSDT","AVAXUSDT","ATOMUSDT","FTMUSDT",
     "NEARUSDT","ALGOUSDT","EGLDUSDT","AXSUSDT","SANDUSDT","MANAUSDT","GALAUSDT","APEUSDT","CHZUSDT","ENJUSDT",
     "LRCUSDT","GMTUSDT","ZILUSDT","BATUSDT","COMPUSDT","1INCHUSDT","CRVUSDT","KNCUSDT","REEFUSDT","RVNUSDT",
     "ICPUSDT","LUNAUSDT","SKLUSDT","MASKUSDT","CVCUSDT","STORJUSDT","BLZUSDT","DATAUSDT","ANKRUSDT",
@@ -45,22 +46,18 @@ def atr(df, n=ATR_LEN):
 def vwap(df):
     h, l, c = df["h"], df["l"], df["c"]
     tp = (h + l + c) / 3
-    #  if no volume column, assume 1 (neutral)
     v = df["v"] if "v" in df.columns else 1
-    if isinstance(v, int):   # fallback for dummy volume
+    if isinstance(v, int):
         return tp.expanding().mean()
     return (tp * v).cumsum() / v.cumsum()
-
 
 def signal(df):
     if len(df) < ATR_LEN+2:   return None
     prev,last = df.iloc[-2], df.iloc[-1]
     mid   = (prev["h"] + prev["l"]) / 2
     atr_v = atr(df).iloc[-2]
-    # VWAP confirmation: price touched VWAP and reversed
     vwap_p = vwap(df).iloc[-2]
     touch_vwap = (prev["l"] <= vwap_p <= prev["h"])
-    # midpoint reversal + VWAP touch
     if touch_vwap:
         if prev["c"] < mid and last["c"] > mid:   return "BUY"
         if prev["c"] > mid and last["c"] < mid:   return "SELL"
@@ -72,21 +69,24 @@ async def send(sym, dir, entry, tp, sl):
     await bot.send_message(chat_id=CHAT_ID, text=msg)
     print(datetime.datetime.utcnow(), msg)
 
+async def main():
+    sent = set()
+    while True:
+        for sym in SYMBOLS:
+            df = get_klines(sym)
+            if df is None or len(df) < ATR_LEN+2:  continue
+            dir = signal(df)
+            atr_v = atr(df).iloc[-2]
+            entry = df["c"].iloc[-1]
+            tp = entry + (dir=="BUY" and 1 or -1) * TP_MULT * atr_v
+            sl = entry - (dir=="BUY" and 1 or -1) * SL_MULT * atr_v
+            if dir and (sym, dir) not in sent:
+                await send(sym, dir, entry, tp, sl)
+                sent.add((sym, dir))
+            elif not dir and (sym, "BUY") in sent: sent.discard((sym, "BUY"))
+            elif not dir and (sym, "SELL") in sent: sent.discard((sym, "SELL"))
+        await asyncio.sleep(5*60)   # async-совместимый sleep
 
-sent = set()
-while True:
-    for sym in SYMBOLS:
-        df = get_klines(sym)
-        if df is None or len(df) < ATR_LEN+2:  continue
-        dir = signal(df)
-        atr_v = atr(df).iloc[-2]
-        entry = df["c"].iloc[-1]
-        tp = entry + (dir=="BUY" and 1 or -1) * TP_MULT * atr_v
-        sl = entry - (dir=="BUY" and 1 or -1) * SL_MULT * atr_v
-        # skip if already sent
-        if dir and (sym, dir) not in sent:
-        await send(sym, dir, entry, tp, sl)
-            sent.add((sym, dir))
-        elif not dir and (sym, "BUY") in sent: sent.discard((sym, "BUY"))
-        elif not dir and (sym, "SELL") in sent: sent.discard((sym, "SELL"))
-    time.sleep(5*60)
+# ------- entry point for Render -------
+if __name__ == "__main__":
+    asyncio.run(main())
