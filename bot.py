@@ -66,11 +66,12 @@ def signal(df):
         if prev["c"] > mid and last["c"] < mid:   return "SELL"
     return None
 
-def send(sym, dir, entry, tp, sl):
+async def send(sym, dir, entry, tp, sl):
     msg = (f"🔔 MIDPOINT-REV 5m\nSymbol: {sym}\nSignal: {dir}\nEntry: {entry:.4f}\n"
            f"TP: {tp:.4f}  (25× ≈ +{TP_MULT*100:.0f}%)\nSL: {sl:.4f}  (25× ≈ -{SL_MULT*100:.0f}%)")
-    bot.send_message(chat_id=CHAT_ID, text=msg)
+    await bot.send_message(chat_id=CHAT_ID, text=msg)
     print(datetime.datetime.utcnow(), msg)
+
 
 sent = set()
 while True:
@@ -84,7 +85,7 @@ while True:
         sl = entry - (dir=="BUY" and 1 or -1) * SL_MULT * atr_v
         # skip if already sent
         if dir and (sym, dir) not in sent:
-            send(sym, dir, entry, tp, sl)
+        await send(sym, dir, entry, tp, sl)
             sent.add((sym, dir))
         elif not dir and (sym, "BUY") in sent: sent.discard((sym, "BUY"))
         elif not dir and (sym, "SELL") in sent: sent.discard((sym, "SELL"))
