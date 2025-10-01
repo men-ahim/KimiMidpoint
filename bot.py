@@ -43,9 +43,14 @@ def atr(df, n=ATR_LEN):
     return tr.rolling(n).mean()
 
 def vwap(df):
-    h,l,c,v = df["h"], df["l"], df["c"], df["v"] if "v" in df else 1
-    tp = (h+l+c)/3
-    return (tp*v).cumsum() / v.cumsum()
+    h, l, c = df["h"], df["l"], df["c"]
+    tp = (h + l + c) / 3
+    #  if no volume column, assume 1 (neutral)
+    v = df["v"] if "v" in df.columns else 1
+    if isinstance(v, int):   # fallback for dummy volume
+        return tp.expanding().mean()
+    return (tp * v).cumsum() / v.cumsum()
+
 
 def signal(df):
     if len(df) < ATR_LEN+2:   return None
