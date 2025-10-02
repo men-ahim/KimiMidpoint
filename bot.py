@@ -8,6 +8,25 @@ import os, time, datetime, requests, json, asyncio
 import pandas as pd
 import numpy as np
 from telegram import Bot
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# ----------  Health check server for Render  ----------
+class HealthCheck(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+    
+    def log_message(self, format, *args):
+        pass  # Отключаем логи HTTP запросов
+
+def run_health_server():
+    port = int(os.environ.get('PORT', 10000))
+    server = HTTPServer(('0.0.0.0', port), HealthCheck)
+    print(f"Health check server running on port {port}")
+    server.serve_forever()
 
 # ----------  user constants  ----------
 BOT_TOKEN   = os.getenv("BOT_TOKEN")
@@ -38,7 +57,7 @@ def get_klines(symbol):
             return None
         data = r.json()
         df = pd.DataFrame(data, columns=["t","o","h","l","c","v","ct","qv","n","tb","tq","ig"])
-        df = df[["o","h","l","c","v"]].astype(float)  # сохраняем volume!
+        df = df[["o","h","l","c","v"]].astype(float)
         return df
     except Exception as e:
         print(f"Error getting klines for {symbol}: {e}")
@@ -94,11 +113,10 @@ async def main():
                     atr_v = atr(df).iloc[-2]
                     entry = df["c"].iloc[-1]
                     
-                    # Правильный расчет TP/SL
                     if dir == "BUY":
                         tp = entry + TP_MULT * atr_v
                         sl = entry - SL_MULT * atr_v
-                    else:  # SELL
+                    else:
                         tp = entry - TP_MULT * atr_v
                         sl = entry + SL_MULT * atr_v
                     
@@ -106,7 +124,6 @@ async def main():
                         await send(sym, dir, entry, tp, sl)
                         sent.add((sym, dir))
                 else:
-                    # Очищаем сигналы, если условия больше не выполняются
                     sent.discard((sym, "BUY"))
                     sent.discard((sym, "SELL"))
                     
@@ -114,8 +131,12 @@ async def main():
                 print(f"Error processing {sym}: {e}")
                 continue
         
-        await asyncio.sleep(5*60)   # 5 минут
+        await asyncio.sleep(5*60)
 
 # ------- entry point for Render -------
 if __name__ == "__main__":
+    # Запускаем health check сервер в фоне
+    Thread(target=run_health_server, daemon=True).start()
+    
+    # Запускаем основной бот
     asyncio.run(main())
